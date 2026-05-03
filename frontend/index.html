@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MusicXML Viewer</title>
+    <link rel="stylesheet" href="/frontend/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay/build/opensheetmusicdisplay.min.js"></script>
+</head>
+<body>
+
+<div class="container">
+
+<h1>MusicXML Web Viewer & Analyzer</h1>
+
+<div class="section">
+<h3>Upload MusicXML File</h3>
+<input type="file" id="fileInput">
+<button onclick="uploadFile()">Upload</button>
+</div>
+
+<div class="section">
+<h3>Or Select Demo File</h3>
+<select id="fileList"></select>
+<button onclick="loadDemo()">Load</button>
+</div>
+
+<div class="section">
+<h3>Extracted Metadata from MusicXML</h3>
+<pre id="output"></pre>
+</div>
+
+<div class="section">
+<h3>Sheet Music</h3>
+<div id="osmd-container"></div>
+</div>
+
+<div class="section">
+<h3>Transpose</h3>
+<input type="number" id="transposeValue" placeholder="Enter semitones">
+<button onclick="transposeMusic()">Transpose</button>
+</div>
+
+<div class="section">
+<h3>Go to Measure</h3>
+<input type="number" id="measureNumber" placeholder="Enter measure">
+<button onclick="goToMeasure()">Go</button>
+</div>
+
+<div class="section">
+<h3>Search Notes / Rhythm</h3>
+<input type="text" id="searchInput" placeholder="Enter pitch (C4) or duration (quarter)">
+<button onclick="searchMusic()">Search</button>
+<pre id="searchOutput"></pre>
+</div>
+
+</div>
+
+<script>
+
+let currentFile = null;
+let osmdInstance = new opensheetmusicdisplay.OpenSheetMusicDisplay("osmd-container");
+let appState = { file: null, metadata: null };
+
+async function loadFiles() {
+    const res = await fetch("/api/scores");
+    const files = await res.json();
+    const dropdown = document.getElementById("fileList");
+    files.forEach(f => {
+        let option = document.createElement("option");
+        option.value = f;
+        option.text = f;
+        dropdown.appendChild(option);
+    });
+}
+
+async function renderMusic(file) {
+    osmdInstance = new opensheetmusicdisplay.OpenSheetMusicDisplay("osmd-container", {
+        drawingParameters: "compact"
+    });
+    await osmdInstance.load(file);
+    osmdInstance.render();
+}
+
+async function uploadFile() {
+    const file = document.getElementById("fileInput").files[0];
+    currentFile = file;
+    appState.file = file;
+
+    document.getElementById("output").innerText = "Loading...";
+
+    let formData = new FormData();
+    formData.append("file", file);
+
+    const res = await fetch("/api/parse", {
+        method: "POST",
+        body: formData
+    });
+
+    const data = await res.json();
+    appState.metadata = data;
+    document.getElementById("output").innerText = JSON.stringify(data, null, 2);
+
+    await renderMusic(file);
+}
+
+async function loadDemo() {
+    const fileName = document.getElementById("fileList").value;
+
+    document.getElementById("output").innerText = "Loading...";
+
+    const res = await fetch("/data/scores/" + fileName);
+    const blob = await res.blob();
+
+    currentFile = blob;
+    appState.file = blob;
+
+    let formData = new FormData();
+    formData.append("file", blob, fileName);
+
+    const parseRes = await fetch("/api/parse", {
+        method: "POST",
+        body: formData
+    });
+
+    const data = await parseRes.json();
+    appState.metadata = data;
+    document.getElementById("output").innerText = JSON.stringify(data, null, 2);
+
+    await renderMusic(blob);
+}
+
+async function transposeMusic() {
+    if (!currentFile) return;
+
+    const semitones = document.getElementById("transposeValue").value;
+
+    let formData = new FormData();
+    formData.append("file", currentFile);
+    formData.append("semitones", semitones);
+
+    const res = await fetch("/api/transpose", {
+        method: "POST",
+        body: formData
+    });
+
+    const blob = await res.blob();
+    currentFile = blob;
+    appState.file = blob;
+
+    await renderMusic(blob);
+}
+
+function goToMeasure() {
+    if (!osmdInstance) return;
+
+    const measure = parseInt(document.getElementById("measureNumber").value);
+
+    osmdInstance.cursor.show();
+    osmdInstance.cursor.reset();
+
+    let count = 1;
+    while (!osmdInstance.cursor.Iterator.EndReached && count < measure) {
+        osmdInstance.cursor.next();
+        count++;
+    }
+
+    setTimeout(() => {
+        const cursorElement = document.querySelector(".osmd-cursor");
+        if (cursorElement) {
+            cursorElement.scrollIntoView({
+                behavior: "smooth",
+                block: "center"
+            });
+        }
+    }, 200);
+}
+
+async function searchMusic() {
+    if (!currentFile) return;
+
+    const query = document.getElementById("searchInput").value;
+
+    let formData = new FormData();
+    formData.append("file", currentFile);
+    formData.append("query", query);
+
+    const res = await fetch("/api/search", {
+        method: "POST",
+        body: formData
+    });
+
+    const data = await res.json();
+    document.getElementById("searchOutput").innerText = JSON.stringify(data, null, 2);
+}
+
+loadFiles();
+
+</script>
+
+</body>
+</html>
